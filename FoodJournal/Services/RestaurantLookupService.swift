@@ -6,6 +6,8 @@ struct RestaurantCandidate {
     let coordinate: CLLocationCoordinate2D
     let address: String?
     let mapItemIdentifier: String?
+    let websiteHost: String?
+    let categoryRawValue: String?
 }
 
 enum RestaurantLookupService {
@@ -42,7 +44,9 @@ enum RestaurantLookupService {
                 name: item.name ?? "Unknown",
                 coordinate: item.placemark.coordinate,
                 address: formatAddress(item.placemark),
-                mapItemIdentifier: mapItemIdentifier
+                mapItemIdentifier: mapItemIdentifier,
+                websiteHost: item.url?.host(),
+                categoryRawValue: item.pointOfInterestCategory?.rawValue
             )
         }
     }

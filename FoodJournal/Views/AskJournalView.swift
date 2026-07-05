@@ -67,8 +67,12 @@ struct AskJournalView: View {
                                             .clipShape(RoundedRectangle(cornerRadius: 6))
                                         }
                                         VStack(alignment: .leading) {
-                                            Text(visit.restaurant?.name ?? "Unknown")
-                                                .font(.subheadline).bold()
+                                            RestaurantNameLabel(
+                                                restaurant: visit.restaurant,
+                                                placeholder: "Unknown",
+                                                font: .subheadline.bold(),
+                                                logoSize: 18
+                                            )
                                             Text(visit.date.formatted(date: .abbreviated, time: .omitted))
                                                 .font(.caption).foregroundStyle(.secondary)
                                         }

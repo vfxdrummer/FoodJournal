@@ -88,8 +88,7 @@ private struct ReviewVisitRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(visit.restaurant?.name ?? "Unknown place")
-                        .font(.headline)
+                    RestaurantNameLabel(restaurant: visit.restaurant)
                     Text(visit.date.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption)
                         .foregroundStyle(.secondary)

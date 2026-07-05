@@ -9,16 +9,23 @@ final class Restaurant {
     var longitude: Double
     var address: String?
     var mapItemIdentifier: String?
+    /// Website host (e.g. "rosas-taqueria.com") used to fetch the establishment's icon/logo.
+    var websiteHost: String?
+    /// `MKPointOfInterestCategory.rawValue` (e.g. "MKPOICategoryCafe"), used to pick a
+    /// category-appropriate fallback symbol when no logo is available.
+    var categoryRawValue: String?
 
     @Relationship(deleteRule: .cascade, inverse: \Visit.restaurant)
     var visits: [Visit] = []
 
-    init(name: String, latitude: Double, longitude: Double, address: String? = nil, mapItemIdentifier: String? = nil) {
+    init(name: String, latitude: Double, longitude: Double, address: String? = nil, mapItemIdentifier: String? = nil, websiteHost: String? = nil, categoryRawValue: String? = nil) {
         self.name = name
         self.latitude = latitude
         self.longitude = longitude
         self.address = address
         self.mapItemIdentifier = mapItemIdentifier
+        self.websiteHost = websiteHost
+        self.categoryRawValue = categoryRawValue
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -107,5 +114,31 @@ final class ScreenedPhoto {
         self.localIdentifier = localIdentifier
         self.isDining = isDining
         self.screenedAt = screenedAt
+    }
+}
+
+/// Persistent, disk-backed lookup of establishment logos keyed by website host, so a logo is
+/// fetched from the web at most once and then survives app relaunches. `isMissing` records a
+/// negative result (we looked and found nothing) so we don't keep re-hitting logo-less sites.
+@Model
+final class EstablishmentLogo {
+    @Attribute(.unique) var host: String
+    /// The icon bytes, stored outside the main store on disk when large enough.
+    @Attribute(.externalStorage) var imageData: Data?
+    /// The URL the icon was resolved from — lets us refresh from the same source later.
+    var resolvedIconURLString: String?
+    var isMissing: Bool
+    /// Which logo sources were enabled when a negative result was recorded. If this no longer
+    /// matches the current sources (e.g. Brandfetch was turned on), the miss is re-evaluated.
+    var missSignature: String?
+    var fetchedAt: Date
+
+    init(host: String, imageData: Data? = nil, resolvedIconURLString: String? = nil, isMissing: Bool = false, missSignature: String? = nil, fetchedAt: Date = Date()) {
+        self.host = host
+        self.imageData = imageData
+        self.resolvedIconURLString = resolvedIconURLString
+        self.isMissing = isMissing
+        self.missSignature = missSignature
+        self.fetchedAt = fetchedAt
     }
 }

@@ -139,6 +139,13 @@ final class VisitDiscoveryService {
             let dLon = r.longitude - candidate.coordinate.longitude
             return abs(dLat) < 0.0005 && abs(dLon) < 0.0005
         }) {
+            // Backfill fields that may not have been captured when the record was created.
+            if existing.websiteHost == nil, let host = candidate.websiteHost {
+                existing.websiteHost = host
+            }
+            if existing.categoryRawValue == nil, let category = candidate.categoryRawValue {
+                existing.categoryRawValue = category
+            }
             return existing
         }
 
@@ -147,7 +154,9 @@ final class VisitDiscoveryService {
             latitude: candidate.coordinate.latitude,
             longitude: candidate.coordinate.longitude,
             address: candidate.address,
-            mapItemIdentifier: candidate.mapItemIdentifier
+            mapItemIdentifier: candidate.mapItemIdentifier,
+            websiteHost: candidate.websiteHost,
+            categoryRawValue: candidate.categoryRawValue
         )
         modelContext.insert(restaurant)
         return restaurant

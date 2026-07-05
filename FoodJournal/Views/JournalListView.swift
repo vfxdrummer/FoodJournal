@@ -31,8 +31,7 @@ struct JournalListView: View {
                                         .clipShape(RoundedRectangle(cornerRadius: 8))
                                     }
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(visit.restaurant?.name ?? "Unknown place")
-                                            .font(.headline)
+                                        RestaurantNameLabel(restaurant: visit.restaurant)
                                         if let occ = visit.occasion, !occ.isEmpty {
                                             Text(occ).font(.caption).foregroundStyle(.secondary)
                                         }

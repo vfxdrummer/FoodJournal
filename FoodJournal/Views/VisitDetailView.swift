@@ -17,7 +17,7 @@ struct VisitDetailView: View {
         Form {
             Section("Place") {
                 if let r = visit.restaurant {
-                    Text(r.name).font(.headline)
+                    RestaurantNameLabel(restaurant: r, logoSize: 24)
                     if let addr = r.address { Text(addr).font(.caption).foregroundStyle(.secondary) }
                 } else {
                     Text("Unknown restaurant").foregroundStyle(.secondary)
