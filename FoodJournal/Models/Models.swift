@@ -93,3 +93,19 @@ final class VoiceNote {
         return docs.appendingPathComponent(audioFilename)
     }
 }
+
+/// Cache of the ML dining screen for a PHAsset, so rescans don't re-run Vision on
+/// photos we've already classified (including ones that were rejected and never
+/// became a Visit). Keyed by the asset's stable `localIdentifier`.
+@Model
+final class ScreenedPhoto {
+    @Attribute(.unique) var localIdentifier: String
+    var isDining: Bool
+    var screenedAt: Date
+
+    init(localIdentifier: String, isDining: Bool, screenedAt: Date = Date()) {
+        self.localIdentifier = localIdentifier
+        self.isDining = isDining
+        self.screenedAt = screenedAt
+    }
+}

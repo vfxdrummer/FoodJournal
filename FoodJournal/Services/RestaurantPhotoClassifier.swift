@@ -50,23 +50,6 @@ enum RestaurantPhotoClassifier {
         }
     }
 
-    // MARK: - Cluster gate
-
-    /// Returns `true` as soon as the cluster contains `minimumDiningPhotos` photos that look
-    /// like dining. Short-circuits so a strong cluster doesn't classify every photo.
-    static func clusterLooksLikeDining(assets: [PHAsset], minimumDiningPhotos: Int = 1) async -> Bool {
-        guard minimumDiningPhotos > 0 else { return true }
-        var matches = 0
-        for asset in assets {
-            let signals = await signals(for: asset)
-            if signals.isDining {
-                matches += 1
-                if matches >= minimumDiningPhotos { return true }
-            }
-        }
-        return false
-    }
-
     // MARK: - Per-photo classification
 
     static func signals(for asset: PHAsset) async -> Signals {

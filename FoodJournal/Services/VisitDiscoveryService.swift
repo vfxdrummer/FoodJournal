@@ -7,6 +7,10 @@ import CoreLocation
 final class VisitDiscoveryService {
     let modelContext: ModelContext
 
+    /// How many dining-positive photos a cluster needs before it's accepted as a restaurant
+    /// visit. `1` catches quick single-dish meals; raise it to cut false positives further.
+    static let minimumDiningPhotosPerCluster = 1
+
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
@@ -31,9 +35,40 @@ final class VisitDiscoveryService {
         // 4. Cluster
         let clusters = PhotoClusteringService.cluster(assets)
 
-        // 5. For each cluster, look up a restaurant candidate and insert a Visit
+        // 5. For each cluster, gate on dining evidence, then look up a restaurant and insert a Visit.
+        //    Screening is cached per-photo (see ScreenedPhoto) so rescans don't re-run Vision on
+        //    photos we've already looked at — including rejected, non-dining ones.
+        var screenCache = try loadScreenCache()
+        var newScreens: [(id: String, isDining: Bool)] = []
         var createdCount = 0
+
         for cluster in clusters {
+            // ML gate: only treat this cluster as a restaurant visit if at least one photo
+            // actually looks like dining (food, or people around a table). This is what stops
+            // every geotagged photo from becoming a "visit". Context photos in the cluster
+            // (storefront, menu, group shots) still ride along in the album below.
+            var diningMatches = 0
+            var looksLikeDining = false
+            for asset in cluster.assets {
+                let id = asset.localIdentifier
+                let isDining: Bool
+                if let cached = screenCache[id] {
+                    isDining = cached
+                } else {
+                    isDining = await RestaurantPhotoClassifier.signals(for: asset).isDining
+                    screenCache[id] = isDining
+                    newScreens.append((id, isDining))
+                }
+                if isDining {
+                    diningMatches += 1
+                    if diningMatches >= Self.minimumDiningPhotosPerCluster {
+                        looksLikeDining = true
+                        break
+                    }
+                }
+            }
+            guard looksLikeDining else { continue }
+
             let candidates = await RestaurantLookupService.lookup(near: cluster.centroid)
             guard let best = candidates.first else { continue }
 
@@ -54,6 +89,11 @@ final class VisitDiscoveryService {
             createdCount += 1
         }
 
+        // Persist newly screened photos so future scans skip Vision for them.
+        for screen in newScreens {
+            modelContext.insert(ScreenedPhoto(localIdentifier: screen.id, isDining: screen.isDining))
+        }
+
         try modelContext.save()
         return createdCount
     }
@@ -66,6 +106,16 @@ final class VisitDiscoveryService {
                 continuation.resume(returning: status)
             }
         }
+    }
+
+    /// Preload every prior screening result into a `[localIdentifier: isDining]` map so the
+    /// gate can check the cache with a dictionary lookup instead of a per-photo fetch.
+    private func loadScreenCache() throws -> [String: Bool] {
+        let screened = try modelContext.fetch(FetchDescriptor<ScreenedPhoto>())
+        return Dictionary(
+            screened.map { ($0.localIdentifier, $0.isDining) },
+            uniquingKeysWith: { current, _ in current }
+        )
     }
 
     private func latestPhotoDate() throws -> Date? {

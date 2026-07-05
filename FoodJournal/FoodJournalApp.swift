@@ -8,7 +8,8 @@ struct FoodJournalApp: App {
             Restaurant.self,
             Visit.self,
             PhotoAsset.self,
-            VoiceNote.self
+            VoiceNote.self,
+            ScreenedPhoto.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
