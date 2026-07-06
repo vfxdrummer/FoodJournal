@@ -15,6 +15,9 @@ enum DataResetService {
         try? context.delete(model: VoiceNote.self)
         try? context.delete(model: ScreenedPhoto.self)
         try? context.delete(model: EstablishmentLogo.self)
+        try? context.delete(model: Person.self)
+        try? context.delete(model: DetectedFace.self)
+        try? context.delete(model: FaceScannedPhoto.self)
         try? context.save()
 
         removeVoiceFiles()

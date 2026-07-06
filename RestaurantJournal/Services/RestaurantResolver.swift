@@ -26,6 +26,9 @@ enum RestaurantResolver {
             if existing.categoryRawValue == nil, let category = candidate.categoryRawValue {
                 existing.categoryRawValue = category
             }
+            if existing.city == nil { existing.city = candidate.city }
+            if existing.region == nil { existing.region = candidate.region }
+            if existing.country == nil { existing.country = candidate.country }
             return existing
         }
 
@@ -36,7 +39,10 @@ enum RestaurantResolver {
             address: candidate.address,
             mapItemIdentifier: candidate.mapItemIdentifier,
             websiteHost: candidate.websiteHost,
-            categoryRawValue: candidate.categoryRawValue
+            categoryRawValue: candidate.categoryRawValue,
+            city: candidate.city,
+            region: candidate.region,
+            country: candidate.country
         )
         context.insert(restaurant)
         return restaurant

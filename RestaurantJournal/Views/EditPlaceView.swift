@@ -1,9 +1,10 @@
 import SwiftUI
 import SwiftData
 import CoreLocation
+import MapKit
 
-/// Correct a wrong restaurant match: shows the nearby food POIs at the visit's location and lets
-/// the user pick the right one, or enter a custom name via "Other".
+/// Correct a wrong restaurant match: shows nearby food POIs, live address/place autocomplete with a
+/// map preview, and a custom-name fallback.
 struct EditPlaceView: View {
     @Bindable var visit: Visit
     @Environment(\.modelContext) private var modelContext
@@ -11,23 +12,107 @@ struct EditPlaceView: View {
 
     @State private var candidates: [RestaurantCandidate] = []
     @State private var isLoading = true
-    @State private var customName = ""
+    @State private var searchText = ""
+    @StateObject private var completer = AddressSearchCompleter()
+    @State private var pendingCandidate: RestaurantCandidate?
+    @State private var isResolving = false
+    @State private var cameraPosition: MapCameraPosition = .automatic
 
     private var origin: CLLocation? {
         visit.lookupCoordinate.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
     }
 
+    /// The coordinate the map pins: a chosen suggestion, else the visit's own location.
+    private var displayCoordinate: CLLocationCoordinate2D? {
+        pendingCandidate?.coordinate ?? visit.lookupCoordinate
+    }
+
+    private var displayName: String {
+        pendingCandidate?.name ?? visit.restaurant?.name ?? "Here"
+    }
+
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespaces)
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                if isLoading {
-                    HStack { Spacer(); ProgressView(); Spacer() }
-                } else if candidates.isEmpty {
-                    Text("No nearby places found.")
-                        .foregroundStyle(.secondary)
+                if displayCoordinate != nil {
+                    Section {
+                        Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
+                            if let coord = displayCoordinate {
+                                Marker(displayName, coordinate: coord)
+                            }
+                        }
+                        .frame(height: 200)
+                        .listRowInsets(EdgeInsets())
+                    }
                 }
 
-                if !candidates.isEmpty {
+                Section("Find a place") {
+                    TextField("Search name or address", text: $searchText)
+                        .autocorrectionDisabled()
+                        .onChange(of: searchText) { _, newValue in
+                            completer.update(query: newValue)
+                        }
+
+                    if isResolving {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Locating…").foregroundStyle(.secondary)
+                        }
+                    }
+
+                    ForEach(completer.suggestions, id: \.self) { suggestion in
+                        Button {
+                            Task { await previewSuggestion(suggestion) }
+                        } label: {
+                            HStack {
+                                Image(systemName: "mappin.circle").foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(suggestion.title).foregroundStyle(.primary)
+                                    if !suggestion.subtitle.isEmpty {
+                                        Text(suggestion.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if !trimmedSearch.isEmpty && completer.suggestions.isEmpty && !isResolving {
+                        Button {
+                            useCustomName(trimmedSearch)
+                        } label: {
+                            Label("Use “\(trimmedSearch)” as the name", systemImage: "pencil")
+                        }
+                    }
+                }
+
+                if let pending = pendingCandidate {
+                    Section("Selected") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pending.name).font(.headline)
+                            if let address = pending.address {
+                                Text(address).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Button {
+                            select(pending)
+                        } label: {
+                            Label("Use this place", systemImage: "checkmark.circle.fill")
+                        }
+                    }
+                }
+
+                if isLoading {
+                    Section {
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                    }
+                } else if !candidates.isEmpty {
                     Section("Nearby places") {
                         ForEach(Array(candidates.enumerated()), id: \.offset) { _, candidate in
                             Button {
@@ -39,14 +124,6 @@ struct EditPlaceView: View {
                         }
                     }
                 }
-
-                Section("Other") {
-                    HStack {
-                        TextField("Enter a place name", text: $customName)
-                        Button("Use") { useCustomName() }
-                            .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
             }
             .navigationTitle("Change place")
             .navigationBarTitleDisplayMode(.inline)
@@ -55,6 +132,7 @@ struct EditPlaceView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
+            .onAppear(perform: configureForVisit)
             .task { await loadCandidates() }
         }
     }
@@ -87,11 +165,39 @@ struct EditPlaceView: View {
 
     // MARK: - Actions
 
+    private func configureForVisit() {
+        guard let coord = visit.lookupCoordinate else { return }
+        cameraPosition = .region(
+            MKCoordinateRegion(center: coord, latitudinalMeters: 400, longitudinalMeters: 400)
+        )
+        // Bias autocomplete to a wide area around the visit so local places rank first.
+        completer.setRegion(
+            MKCoordinateRegion(center: coord, latitudinalMeters: 30_000, longitudinalMeters: 30_000)
+        )
+    }
+
     private func loadCandidates() async {
         isLoading = true
         defer { isLoading = false }
         guard let coordinate = visit.lookupCoordinate else { return }
         candidates = await RestaurantLookupService.lookup(near: coordinate)
+    }
+
+    private func previewSuggestion(_ completion: MKLocalSearchCompletion) async {
+        isResolving = true
+        defer { isResolving = false }
+        guard let item = await completer.resolve(completion) else { return }
+        let candidate = RestaurantLookupService.candidate(from: item)
+        pendingCandidate = candidate
+        withAnimation {
+            cameraPosition = .region(
+                MKCoordinateRegion(
+                    center: candidate.coordinate,
+                    latitudinalMeters: 400,
+                    longitudinalMeters: 400
+                )
+            )
+        }
     }
 
     private func select(_ candidate: RestaurantCandidate) {
@@ -101,10 +207,10 @@ struct EditPlaceView: View {
         dismiss()
     }
 
-    private func useCustomName() {
-        let name = customName.trimmingCharacters(in: .whitespaces)
+    private func useCustomName(_ raw: String) {
+        let name = raw.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        let coordinate = visit.lookupCoordinate
+        let coordinate = pendingCandidate?.coordinate ?? visit.lookupCoordinate
         let restaurant = Restaurant(
             name: name,
             latitude: coordinate?.latitude ?? 0,

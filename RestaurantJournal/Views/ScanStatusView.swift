@@ -3,7 +3,11 @@ import SwiftUI
 /// Scan trigger + live progress with pause/resume, driven by an observable `VisitDiscoveryService`.
 struct ScanStatusView: View {
     let scanner: VisitDiscoveryService
-    let onScan: () -> Void
+    /// Whether the scan can be cancelled. The first-run onboarding scan must complete in full, so
+    /// this is `false` until the user has finished one scan.
+    let allowCancel: Bool
+    /// `true` = full rescan (ignore the incremental window, re-check the whole library).
+    let onScan: (Bool) -> Void
 
     var body: some View {
         VStack(spacing: 8) {
@@ -28,20 +32,33 @@ struct ScanStatusView: View {
                         .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.bordered)
+                    if allowCancel {
+                        Button(role: .destructive) {
+                            scanner.cancel()
+                        } label: {
+                            Label("Cancel", systemImage: "xmark")
+                                .labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                    }
                 }
                 ProgressView(value: scanner.progress)
 
             case .idle, .finished:
-                Button(action: onScan) {
+                Button {
+                    onScan(false)
+                } label: {
                     Label("Scan photo library", systemImage: "arrow.clockwise")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
 
-                if scanner.phase == .finished, scanner.newVisitCount > 0 {
-                    Text("Added \(scanner.newVisitCount) visit\(scanner.newVisitCount == 1 ? "" : "s").")
+                if scanner.phase == .finished, let summary = scanner.summary {
+                    Text(summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 if let error = scanner.errorMessage {
                     Text(error)

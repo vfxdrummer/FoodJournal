@@ -12,6 +12,12 @@ import UIKit
 /// dropped in behind this same interface later.
 enum RestaurantPhotoClassifier {
 
+    /// Bump this whenever the classifier's behavior changes. A full rescan re-evaluates photos that
+    /// were screened by an older version and came back *negative*, so improvements pick up photos
+    /// that were previously missed (e.g. a coffee that wasn't recognized). Positives and the user's
+    /// deletions are never re-screened.
+    static let version = 1
+
     // MARK: - Tunables
 
     /// Include the "people posing around a table" signal (≥2 faces + a dining context
@@ -25,7 +31,7 @@ enum RestaurantPhotoClassifier {
     /// Precision/recall gate applied to each Vision label before we trust it. Vision's
     /// per-label precision/recall calibration is more robust than a raw confidence value.
     /// Loosen (lower precision) to catch more food; tighten to cut false positives.
-    static var labelMinPrecision: Float = 0.5
+    static var labelMinPrecision: Float = 0.4
     static var labelForRecall: Float = 0.5
 
     /// Longest edge (points) of the downsampled image handed to Vision. Small keeps it fast;
@@ -131,9 +137,10 @@ enum RestaurantPhotoClassifier {
         "crab", "egg", "omelet", "pancake", "waffle", "cheese", "chocolate", "candy", "cookie",
         "donut", "doughnut", "ice_cream", "icecream", "barbecue", "bbq", "breakfast", "brunch",
         "lunch", "dinner", "snack",
-        // Beverages
+        // Beverages (incl. the vessel — a cup/mug/glass in frame usually means a drink)
         "beverage", "drink", "cocktail", "wine", "beer", "champagne", "whiskey", "liquor",
-        "coffee", "espresso", "latte", "cappuccino", "tea", "juice", "smoothie", "soda"
+        "coffee", "espresso", "latte", "cappuccino", "tea", "juice", "smoothie", "soda",
+        "cup", "mug", "glass", "saucer"
     ]
 
     /// Setting/tableware labels — only meaningful alongside the people-around-a-table signal.

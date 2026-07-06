@@ -8,6 +8,9 @@ struct RestaurantCandidate {
     let mapItemIdentifier: String?
     let websiteHost: String?
     let categoryRawValue: String?
+    let city: String?
+    let region: String?
+    let country: String?
 }
 
 enum RestaurantLookupService {
@@ -32,23 +35,30 @@ enum RestaurantLookupService {
             return origin.distance(from: aLoc) < origin.distance(from: bLoc)
         }
 
-        return sorted.map { item in
-            // MKMapItem.identifier is iOS 18+; keep the iOS 17 deployment target working.
-            let mapItemIdentifier: String?
-            if #available(iOS 18.0, *) {
-                mapItemIdentifier = item.identifier?.rawValue
-            } else {
-                mapItemIdentifier = nil
-            }
-            return RestaurantCandidate(
-                name: item.name ?? "Unknown",
-                coordinate: item.placemark.coordinate,
-                address: formatAddress(item.placemark),
-                mapItemIdentifier: mapItemIdentifier,
-                websiteHost: item.url?.host(),
-                categoryRawValue: item.pointOfInterestCategory?.rawValue
-            )
+        return sorted.map(candidate(from:))
+    }
+
+    /// Build a `RestaurantCandidate` from a map item — shared by the nearby search and the
+    /// address-autocomplete flow.
+    static func candidate(from item: MKMapItem) -> RestaurantCandidate {
+        // MKMapItem.identifier is iOS 18+; keep the iOS 17 deployment target working.
+        let mapItemIdentifier: String?
+        if #available(iOS 18.0, *) {
+            mapItemIdentifier = item.identifier?.rawValue
+        } else {
+            mapItemIdentifier = nil
         }
+        return RestaurantCandidate(
+            name: item.name ?? "Unknown",
+            coordinate: item.placemark.coordinate,
+            address: formatAddress(item.placemark),
+            mapItemIdentifier: mapItemIdentifier,
+            websiteHost: item.url?.host(),
+            categoryRawValue: item.pointOfInterestCategory?.rawValue,
+            city: item.placemark.locality,
+            region: item.placemark.administrativeArea,
+            country: item.placemark.country
+        )
     }
 
     private static func formatAddress(_ placemark: MKPlacemark) -> String? {
@@ -57,6 +67,7 @@ enum RestaurantLookupService {
         if let s = placemark.thoroughfare { parts.append(s) }
         if let city = placemark.locality { parts.append(city) }
         if let state = placemark.administrativeArea { parts.append(state) }
+        if let country = placemark.country { parts.append(country) }
         return parts.isEmpty ? nil : parts.joined(separator: " ")
     }
 }

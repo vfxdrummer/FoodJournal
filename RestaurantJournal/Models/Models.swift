@@ -14,11 +14,15 @@ final class Restaurant {
     /// `MKPointOfInterestCategory.rawValue` (e.g. "MKPOICategoryCafe"), used to pick a
     /// category-appropriate fallback symbol when no logo is available.
     var categoryRawValue: String?
+    /// Place hierarchy, captured for search (e.g. "where did I eat in Italy / California").
+    var city: String?
+    var region: String?
+    var country: String?
 
     @Relationship(deleteRule: .cascade, inverse: \Visit.restaurant)
     var visits: [Visit] = []
 
-    init(name: String, latitude: Double, longitude: Double, address: String? = nil, mapItemIdentifier: String? = nil, websiteHost: String? = nil, categoryRawValue: String? = nil) {
+    init(name: String, latitude: Double, longitude: Double, address: String? = nil, mapItemIdentifier: String? = nil, websiteHost: String? = nil, categoryRawValue: String? = nil, city: String? = nil, region: String? = nil, country: String? = nil) {
         self.name = name
         self.latitude = latitude
         self.longitude = longitude
@@ -26,6 +30,9 @@ final class Restaurant {
         self.mapItemIdentifier = mapItemIdentifier
         self.websiteHost = websiteHost
         self.categoryRawValue = categoryRawValue
+        self.city = city
+        self.region = region
+        self.country = country
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -43,6 +50,11 @@ final class Visit {
     /// correcting a wrong restaurant match.
     var latitude: Double?
     var longitude: Double?
+    /// The user-chosen cover photo (by PHAsset local identifier). Falls back to the first photo.
+    var coverPhotoLocalIdentifier: String?
+    /// When set, this visit is in "Recently Deleted": hidden everywhere but fully recoverable, and
+    /// permanently purged after a grace period. `nil` means the visit is live.
+    var deletedAt: Date?
 
     @Relationship(deleteRule: .cascade, inverse: \PhotoAsset.visit)
     var photos: [PhotoAsset] = []
@@ -50,11 +62,23 @@ final class Visit {
     @Relationship(deleteRule: .cascade, inverse: \VoiceNote.visit)
     var voiceNotes: [VoiceNote] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \DetectedFace.visit)
+    var detectedFaces: [DetectedFace] = []
+
     init(date: Date, restaurant: Restaurant? = nil, latitude: Double? = nil, longitude: Double? = nil) {
         self.date = date
         self.restaurant = restaurant
         self.latitude = latitude
         self.longitude = longitude
+    }
+
+    /// The photo that represents this visit in lists — the chosen cover, or the first photo.
+    var coverPhoto: PhotoAsset? {
+        if let id = coverPhotoLocalIdentifier,
+           let match = photos.first(where: { $0.localIdentifier == id }) {
+            return match
+        }
+        return photos.first
     }
 
     /// The best available coordinate for re-querying places: the visit's own centroid, or the
@@ -124,12 +148,17 @@ final class ScreenedPhoto {
     /// Set when the user deletes a visit — the scanner then skips this photo so the visit isn't
     /// recreated on the next scan.
     var dismissed: Bool
+    /// The classifier version that produced `isDining`. When the classifier improves (its version
+    /// bumps), a full rescan re-evaluates stale *negatives* — positives are left alone. Defaults to
+    /// 0 so any photos screened before versioning are treated as stale.
+    var screenerVersion: Int = 0
     var screenedAt: Date
 
-    init(localIdentifier: String, isDining: Bool, dismissed: Bool = false, screenedAt: Date = Date()) {
+    init(localIdentifier: String, isDining: Bool, dismissed: Bool = false, screenerVersion: Int = RestaurantPhotoClassifier.version, screenedAt: Date = Date()) {
         self.localIdentifier = localIdentifier
         self.isDining = isDining
         self.dismissed = dismissed
+        self.screenerVersion = screenerVersion
         self.screenedAt = screenedAt
     }
 }
@@ -157,5 +186,69 @@ final class EstablishmentLogo {
         self.isMissing = isMissing
         self.missSignature = missSignature
         self.fetchedAt = fetchedAt
+    }
+}
+
+/// A person you've dined with — a cluster of detected faces, identified by their face (no name).
+/// Ranked in the People tab by how many visits they appear in.
+@Model
+final class Person {
+    /// A representative face crop for the icon.
+    @Attribute(.externalStorage) var representativeFaceData: Data?
+    /// Archived Vision feature print of the representative face, used to cluster new faces.
+    var representativeFeaturePrintData: Data?
+    var createdAt: Date
+
+    @Relationship(deleteRule: .cascade, inverse: \DetectedFace.person)
+    var faces: [DetectedFace] = []
+
+    init(representativeFaceData: Data? = nil, representativeFeaturePrintData: Data? = nil, createdAt: Date = Date()) {
+        self.representativeFaceData = representativeFaceData
+        self.representativeFeaturePrintData = representativeFeaturePrintData
+        self.createdAt = createdAt
+    }
+
+    /// The unique visits this person appears in (each place you've dined together).
+    var uniqueVisits: [Visit] {
+        var seen = Set<PersistentIdentifier>()
+        var result: [Visit] = []
+        for face in faces {
+            if let visit = face.visit, visit.deletedAt == nil,
+               seen.insert(visit.persistentModelID).inserted {
+                result.append(visit)
+            }
+        }
+        return result
+    }
+
+    /// How many times you've dined with this person (the ranking metric).
+    var diningCount: Int { uniqueVisits.count }
+    /// Total photos this person appears in (the tiebreaker).
+    var photoCount: Int { faces.count }
+}
+
+/// A single face found in one photo, linked to the clustered `Person` and the `Visit` it belongs to.
+@Model
+final class DetectedFace {
+    var photoLocalIdentifier: String
+    @Attribute(.externalStorage) var faceCropData: Data?
+    var person: Person?
+    var visit: Visit?
+
+    init(photoLocalIdentifier: String, faceCropData: Data? = nil, person: Person? = nil, visit: Visit? = nil) {
+        self.photoLocalIdentifier = photoLocalIdentifier
+        self.faceCropData = faceCropData
+        self.person = person
+        self.visit = visit
+    }
+}
+
+/// Marks a photo as already scanned for faces, so a rescan skips it (even if it had no faces).
+@Model
+final class FaceScannedPhoto {
+    @Attribute(.unique) var localIdentifier: String
+
+    init(localIdentifier: String) {
+        self.localIdentifier = localIdentifier
     }
 }

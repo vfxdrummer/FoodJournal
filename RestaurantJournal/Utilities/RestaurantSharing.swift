@@ -15,4 +15,18 @@ extension Restaurant {
         ]
         return components?.url
     }
+
+    /// An Apple Maps link to the place — a labeled pin at the stored coordinates, falling back to
+    /// the address text. Opens the Maps app on iOS.
+    var appleMapsURL: URL? {
+        var components = URLComponents(string: "https://maps.apple.com/")
+        var items = [URLQueryItem(name: "q", value: name)]
+        if latitude != 0 || longitude != 0 {
+            items.append(URLQueryItem(name: "ll", value: "\(latitude),\(longitude)"))
+        } else if let address, !address.isEmpty {
+            items.append(URLQueryItem(name: "address", value: address))
+        }
+        components?.queryItems = items
+        return components?.url
+    }
 }

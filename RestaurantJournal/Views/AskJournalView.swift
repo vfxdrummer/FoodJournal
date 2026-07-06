@@ -2,7 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct AskJournalView: View {
-    @Query(sort: [SortDescriptor(\Visit.date, order: .reverse)])
+    @Query(
+        filter: #Predicate<Visit> { $0.deletedAt == nil },
+        sort: \Visit.date,
+        order: .reverse
+    )
     private var visits: [Visit]
 
     @AppStorage(LLMProvider.defaultsKey) private var providerRaw = LLMProvider.claude.rawValue
@@ -17,38 +21,50 @@ struct AskJournalView: View {
     @State private var isLoading = false
     @State private var errorText: String?
     @State private var showingSettings = false
+    @FocusState private var questionFocused: Bool
+    @Environment(\.dismiss) private var dismiss
 
     private var provider: LLMProvider { LLMProvider(rawValue: providerRaw) ?? .claude }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                answerArea
-                Divider()
-                voiceBar
-            }
-            .navigationTitle("Ask")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
+            answerArea
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        Divider()
+                        voiceBar
                     }
+                    .background(.bar)
+                }
+                .navigationTitle("Ask")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                    }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
                         autoSpeak.toggle()
                         if !autoSpeak { speaker.stop() }
                     } label: {
                         Image(systemName: autoSpeak ? "speaker.wave.2.fill" : "speaker.slash.fill")
                     }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     Picker("Model", selection: $providerRaw) {
                         ForEach(LLMProvider.allCases) { provider in
                             Text(provider.displayName).tag(provider.rawValue)
                         }
                     }
                     .pickerStyle(.menu)
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { questionFocused = false }
                 }
             }
             .sheet(isPresented: $showingSettings) {
@@ -59,81 +75,96 @@ struct AskJournalView: View {
 
     // MARK: - Answer area
 
+    @ViewBuilder
     private var answerArea: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if answer.isEmpty && !isLoading && question.isEmpty && !dictation.isListening {
-                    emptyState
-                }
-
-                if !question.isEmpty {
-                    Text(question)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if let errorText {
-                    Text(errorText).font(.caption).foregroundStyle(.red)
-                }
-
-                if isLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Thinking…").foregroundStyle(.secondary)
+        if isPristine {
+            emptyState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !question.isEmpty {
+                        Text(question)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                }
 
-                if !answer.isEmpty {
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(answer)
-                        Spacer(minLength: 0)
-                        Button {
-                            if speaker.isSpeaking { speaker.stop() } else { speaker.speak(answer) }
-                        } label: {
-                            Image(systemName: speaker.isSpeaking ? "stop.circle.fill" : "play.circle")
-                                .font(.title3)
+                    if let errorText {
+                        Text(errorText).font(.caption).foregroundStyle(.red)
+                    }
+
+                    if isLoading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Thinking…").foregroundStyle(.secondary)
                         }
                     }
-                    .padding()
-                    .background(Color.gray.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
 
-                if !referencedVisits.isEmpty {
-                    Text("Referenced visits").font(.headline)
-                    ForEach(referencedVisits) { visit in
-                        referencedRow(visit)
+                    if !answer.isEmpty {
+                        HStack(alignment: .top, spacing: 12) {
+                            Text(answer)
+                            Spacer(minLength: 0)
+                            Button {
+                                if speaker.isSpeaking { speaker.stop() } else { speaker.speak(answer) }
+                            } label: {
+                                Image(systemName: speaker.isSpeaking ? "stop.circle.fill" : "play.circle")
+                                    .font(.title3)
+                            }
+                        }
+                        .padding()
+                        .background(Color.gray.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if !referencedVisits.isEmpty {
+                        Text("Referenced visits").font(.headline)
+                        ForEach(referencedVisits) { visit in
+                            referencedRow(visit)
+                        }
                     }
                 }
+                .padding()
             }
-            .padding()
+            .scrollDismissesKeyboard(.interactively)
         }
     }
 
+    /// True when nothing has been asked yet — show the centered invitation instead of the scroll.
+    private var isPristine: Bool {
+        answer.isEmpty && question.isEmpty && !isLoading
+            && !dictation.isListening && errorText == nil
+    }
+
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "mic.circle")
-                .font(.system(size: 48))
+        VStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 44))
                 .foregroundStyle(.secondary)
-            Text("Tap the mic and ask about your visits.")
+            Text("Ask about your visits")
+                .font(.title3.weight(.semibold))
+            Text("Tap the mic or type a question — I'll search your journal for the answer.")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             Text("“Where did we get those tacos after the game?”")
-                .font(.caption)
+                .font(.callout)
+                .italic()
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
+                .padding(.top, 2)
             Text("Fair-use limit: up to \(QueryRateLimiter.perMinute)/min and \(QueryRateLimiter.perHour)/hour.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .padding(.top, 12)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 48)
+        .padding(.horizontal, 32)
     }
 
     private func referencedRow(_ visit: Visit) -> some View {
         NavigationLink(destination: VisitDetailView(visit: visit)) {
             HStack {
-                if let photo = visit.photos.first {
+                if let photo = visit.coverPhoto {
                     PhotoThumbnailView(
                         localIdentifier: photo.localIdentifier,
                         targetSize: CGSize(width: 120, height: 120)
@@ -172,34 +203,54 @@ struct AskJournalView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(spacing: 12) {
-                TextField("Or type a question", text: $question, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...3)
+            HStack(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 6) {
+                    TextField("Ask about your visits…", text: $question, axis: .vertical)
+                        .lineLimit(1...4)
+                        .focused($questionFocused)
 
-                Button {
-                    Task { await ask() }
-                } label: {
                     if isLoading {
                         ProgressView()
-                    } else {
-                        Image(systemName: "paperplane.fill")
+                            .padding(.trailing, 2)
+                            .padding(.bottom, 2)
+                    } else if canSend {
+                        Button {
+                            Task { await ask() }
+                        } label: {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.title2)
+                                .foregroundStyle(Color.accentColor)
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                        .transition(.scale.combined(with: .opacity))
                     }
                 }
-                .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || isLoading)
+                .padding(.leading, 16)
+                .padding(.trailing, 8)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                )
 
                 Button(action: toggleMic) {
                     Image(systemName: dictation.isListening ? "stop.fill" : "mic.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(.white)
-                        .frame(width: 54, height: 54)
+                        .frame(width: 44, height: 44)
                         .background(dictation.isListening ? Color.red : Color.accentColor)
                         .clipShape(Circle())
                         .symbolEffect(.pulse, isActive: dictation.isListening)
                 }
             }
+            .animation(.snappy, value: canSend)
+            .animation(.snappy, value: isLoading)
         }
         .padding()
+    }
+
+    private var canSend: Bool {
+        !question.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     // MARK: - Actions
@@ -234,6 +285,7 @@ struct AskJournalView: View {
     }
 
     private func ask() async {
+        questionFocused = false
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         guard let client = provider.makeClient() else {

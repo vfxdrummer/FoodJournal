@@ -10,7 +10,10 @@ struct RestaurantJournalApp: App {
             PhotoAsset.self,
             VoiceNote.self,
             ScreenedPhoto.self,
-            EstablishmentLogo.self
+            EstablishmentLogo.self,
+            Person.self,
+            DetectedFace.self,
+            FaceScannedPhoto.self
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {

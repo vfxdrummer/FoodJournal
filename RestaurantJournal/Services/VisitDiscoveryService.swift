@@ -14,7 +14,7 @@ import Observation
 @Observable
 final class VisitDiscoveryService {
 
-    enum Phase {
+    enum Phase: Equatable {
         case idle, scanning, paused, finished
     }
 
@@ -29,6 +29,7 @@ final class VisitDiscoveryService {
     private(set) var total = 0
     private(set) var newVisitCount = 0
     private(set) var errorMessage: String?
+    private(set) var summary: String?
 
     var progress: Double { total > 0 ? Double(processed) / Double(total) : 0 }
     var isBusy: Bool { phase == .scanning || phase == .paused }
@@ -36,6 +37,7 @@ final class VisitDiscoveryService {
     // MARK: - Pause state (not observed)
 
     @ObservationIgnored private var isPaused = false
+    @ObservationIgnored private var isCancelled = false
     @ObservationIgnored private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
 
     func pause() {
@@ -53,6 +55,21 @@ final class VisitDiscoveryService {
         for waiter in waiters { waiter.resume() }
     }
 
+    /// Stop the scan early. Visits already found are kept (they're saved per cluster); the loop
+    /// observes the flag and exits cleanly. Works from either scanning or paused.
+    func cancel() {
+        guard phase == .scanning || phase == .paused else { return }
+        isCancelled = true
+        // If paused, wake the suspended loop so it can observe the cancellation and finish.
+        if isPaused {
+            isPaused = false
+            let waiters = pauseWaiters
+            pauseWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        phase = .scanning
+    }
+
     private func waitWhilePaused() async {
         if isPaused {
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -63,7 +80,7 @@ final class VisitDiscoveryService {
 
     // MARK: - Scan
 
-    func scan(in context: ModelContext) async {
+    func scan(in context: ModelContext, fullRescan: Bool = false) async {
         guard !isBusy else { return }
 
         phase = .scanning
@@ -71,6 +88,9 @@ final class VisitDiscoveryService {
         total = 0
         newVisitCount = 0
         errorMessage = nil
+        summary = nil
+        isCancelled = false
+        isPaused = false
 
         // 1. Photo library authorization
         let status = await requestPhotoAuth()
@@ -80,38 +100,65 @@ final class VisitDiscoveryService {
             return
         }
 
+        // The everyday Scan button is ALWAYS incremental: it resumes from the last imported photo,
+        // so it's fast and never re-scans the whole camera roll. A full re-screen of the library
+        // only happens when the user explicitly chooses "Rescan all" from the overflow menu.
+        let doFull = fullRescan
+
         do {
-            // 2. Scan only photos newer than the latest already-imported one.
-            let latestImportedDate = try latestPhotoDate(in: context)
+            // Incremental scans look only at photos newer than the last import (fast); a full sweep
+            // checks the whole library. Either way we skip photos already imported by identifier —
+            // so nothing duplicates, and new photos are never missed because of an odd/future date.
+            let since = doFull ? nil : try latestPhotoDate(in: context)
+            let importedIDs = try loadImportedIDs(in: context)
 
             // 3. Fetch + 4. cluster.
-            let assets = PhotoClusteringService.fetchAssets(since: latestImportedDate)
-            guard !assets.isEmpty else { phase = .finished; return }
+            let assets = PhotoClusteringService.fetchAssets(since: since)
+                .filter { !importedIDs.contains($0.localIdentifier) }
+            guard !assets.isEmpty else {
+                summary = "No new photos to import."
+                if doFull { lastNegativeRescanVersion = RestaurantPhotoClassifier.version }
+                phase = .finished
+                return
+            }
             total = assets.count
             let clusters = PhotoClusteringService.cluster(assets)
 
             var screenCache = try loadScreenCache(in: context)
             let dismissedIds = try loadDismissedIDs(in: context)
+            let currentVersion = RestaurantPhotoClassifier.version
 
             // 5. Per cluster: gate on dining evidence, look up a restaurant, insert a Visit.
             for cluster in clusters {
                 await waitWhilePaused()
+                if isCancelled { break }
                 let clusterBase = processed
 
                 var diningMatches = 0
                 var looksLikeDining = false
                 for asset in cluster.assets {
+                    if isCancelled { break }
                     let id = asset.localIdentifier
                     let isDining: Bool
                     if dismissedIds.contains(id) {
                         // The user deleted a visit containing this photo — never resurrect it.
                         isDining = false
-                    } else if let cached = screenCache[id] {
-                        isDining = cached
+                    } else if let record = screenCache[id], record.isDining || record.screenerVersion >= currentVersion {
+                        // Trust positives always; trust a negative only if the current classifier
+                        // produced it. A stale negative falls through to be re-screened below.
+                        isDining = record.isDining
                     } else {
-                        isDining = await RestaurantPhotoClassifier.signals(for: asset).isDining
-                        screenCache[id] = isDining
-                        context.insert(ScreenedPhoto(localIdentifier: id, isDining: isDining))
+                        let result = await RestaurantPhotoClassifier.signals(for: asset).isDining
+                        if let record = screenCache[id] {
+                            record.isDining = result
+                            record.screenerVersion = currentVersion
+                            record.screenedAt = Date()
+                        } else {
+                            let record = ScreenedPhoto(localIdentifier: id, isDining: result)
+                            context.insert(record)
+                            screenCache[id] = record
+                        }
+                        isDining = result
                     }
                     processed += 1
                     if isDining {
@@ -124,6 +171,8 @@ final class VisitDiscoveryService {
                 }
                 // Count photos skipped by the early break so progress still reaches 100%.
                 processed = clusterBase + cluster.assets.count
+
+                if isCancelled { break }
 
                 if looksLikeDining {
                     let candidates = await RestaurantLookupService.lookup(near: cluster.centroid)
@@ -157,6 +206,21 @@ final class VisitDiscoveryService {
             errorMessage = error.localizedDescription
         }
 
+        if errorMessage == nil {
+            if isCancelled {
+                // Stopped early — keep what we found, but don't mark the version swept (it didn't
+                // finish), so a later full rescan still covers the rest.
+                summary = "Scan stopped · added \(newVisitCount) visit\(newVisitCount == 1 ? "" : "s") so far."
+            } else {
+                // The full sweep completed — mark negatives up to date for this classifier version
+                // so it doesn't repeat until the next improvement.
+                if doFull { lastNegativeRescanVersion = RestaurantPhotoClassifier.version }
+                if summary == nil {
+                    summary = "Scanned \(total) new photo\(total == 1 ? "" : "s") · added \(newVisitCount) visit\(newVisitCount == 1 ? "" : "s")."
+                }
+            }
+        }
+        isCancelled = false
         phase = .finished
     }
 
@@ -172,10 +236,10 @@ final class VisitDiscoveryService {
 
     /// Preload every prior screening result into a `[localIdentifier: isDining]` map so the
     /// gate can check the cache with a dictionary lookup instead of a per-photo fetch.
-    private func loadScreenCache(in context: ModelContext) throws -> [String: Bool] {
+    private func loadScreenCache(in context: ModelContext) throws -> [String: ScreenedPhoto] {
         let screened = try context.fetch(FetchDescriptor<ScreenedPhoto>())
         return Dictionary(
-            screened.map { ($0.localIdentifier, $0.isDining) },
+            screened.map { ($0.localIdentifier, $0) },
             uniquingKeysWith: { current, _ in current }
         )
     }
@@ -185,6 +249,19 @@ final class VisitDiscoveryService {
     private func loadDismissedIDs(in context: ModelContext) throws -> Set<String> {
         let descriptor = FetchDescriptor<ScreenedPhoto>(predicate: #Predicate { $0.dismissed })
         return Set(try context.fetch(descriptor).map { $0.localIdentifier })
+    }
+
+    /// The classifier version whose negatives have already been swept. When the classifier version
+    /// is newer than this, the next scan does a one-time full sweep to re-check negatives.
+    private var lastNegativeRescanVersion: Int {
+        get { UserDefaults.standard.integer(forKey: "lastNegativeRescanVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "lastNegativeRescanVersion") }
+    }
+
+    /// Identifiers of photos already imported into a visit — skipped so scans never duplicate.
+    private func loadImportedIDs(in context: ModelContext) throws -> Set<String> {
+        let photos = try context.fetch(FetchDescriptor<PhotoAsset>())
+        return Set(photos.map { $0.localIdentifier })
     }
 
     private func latestPhotoDate(in context: ModelContext) throws -> Date? {
