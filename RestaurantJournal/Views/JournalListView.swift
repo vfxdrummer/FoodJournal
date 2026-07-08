@@ -22,6 +22,7 @@ struct JournalListView: View {
     @State private var celebrationCount: Int?
     @State private var searchText = ""
     @State private var showingAsk = false
+    @State private var showingProfile = false
     @State private var showingRescanConfirmation = false
     @State private var viewMode: JournalMode = .list
     /// The very first scan must run to completion (the onboarding moment); only afterwards can a
@@ -125,6 +126,9 @@ struct JournalListView: View {
             .sheet(isPresented: $showingAsk) {
                 AskJournalView()
             }
+            .sheet(isPresented: $showingProfile) {
+                ProfileView()
+            }
             .task {
                 await LocationBackfillService.backfillIfNeeded(in: modelContext)
             }
@@ -154,11 +158,18 @@ struct JournalListView: View {
                         .frame(width: 120)
                     }
                 }
-                // Reachable even when the journal is empty but the trash isn't, so a tester who
-                // deleted everything can still find their way back.
-                if !visits.isEmpty || !deletedVisits.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Menu {
+                // Profile/account — the avatar is the entry point (app logo when signed out or
+                // photo-less, the user's photo once set). Reachable everywhere, including welcome.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingProfile = true
+                    } label: {
+                        ProfileAvatarView(size: 34)
+                    }
+                    .accessibilityLabel("Profile")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
                             if !visits.isEmpty {
                                 Button {
                                     showingRescanConfirmation = true
@@ -188,9 +199,9 @@ struct JournalListView: View {
 #endif
                         } label: {
                             Image(systemName: "ellipsis.circle")
+                                .font(.title2)
                         }
                     }
-                }
             }
             .overlay(alignment: .bottom) {
                 if recentlyDeleted != nil {

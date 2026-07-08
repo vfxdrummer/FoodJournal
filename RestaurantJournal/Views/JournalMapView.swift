@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 import MapKit
+import Combine
+import UIKit
 
 /// A map of everywhere you've dined — logo pins (with a visit-count badge), zoom-aware clustering,
 /// and a details card with directions + the visit history for the tapped place.
@@ -13,6 +15,10 @@ struct JournalMapView: View {
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var visibleRegion: MKCoordinateRegion?
     @State private var selected: Restaurant?
+
+    @StateObject private var locationManager = LocationManager()
+    @State private var pendingRecenter = false
+    @State private var showLocationDenied = false
 
     /// Restaurants that have a real coordinate and at least one visit that isn't in the trash.
     private var mappable: [Restaurant] {
@@ -41,6 +47,7 @@ struct JournalMapView: View {
 
     private var mapContent: some View {
         Map(position: $cameraPosition) {
+            UserAnnotation()
             ForEach(currentClusters) { cluster in
                 Annotation("", coordinate: cluster.coordinate) {
                     if cluster.isCluster {
@@ -70,18 +77,71 @@ struct JournalMapView: View {
             }
         }
         .mapControls {
-            MapUserLocationButton()
             MapCompass()
         }
         .safeAreaInset(edge: .bottom) {
-            if let selected {
-                RestaurantMapCard(restaurant: selected) {
-                    withAnimation(.snappy) { self.selected = nil }
+            VStack(spacing: 10) {
+                HStack {
+                    Spacer()
+                    locateButton
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                if let selected {
+                    RestaurantMapCard(restaurant: selected) {
+                        withAnimation(.snappy) { self.selected = nil }
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+        .onReceive(locationManager.$lastLocation) { location in
+            guard pendingRecenter, let location else { return }
+            pendingRecenter = false
+            withAnimation {
+                let region = MKCoordinateRegion(
+                    center: location.coordinate,
+                    latitudinalMeters: 1500,
+                    longitudinalMeters: 1500
+                )
+                cameraPosition = .region(region)
+                visibleRegion = region
+            }
+        }
+        .alert("Location Access Off", isPresented: $showLocationDenied) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Turn on location access in Settings to center the map on where you are.")
+        }
+    }
+
+    private var locateButton: some View {
+        Button(action: locateMe) {
+            Image(systemName: "location.fill")
+                .font(.headline)
+                .foregroundStyle(.tint)
+                .frame(width: 44, height: 44)
+                .background(.regularMaterial, in: Circle())
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+        }
+        .accessibilityLabel("Center on my location")
+    }
+
+    private func locateMe() {
+        switch locationManager.authorizationStatus {
+        case .denied, .restricted:
+            showLocationDenied = true
+        case .notDetermined:
+            pendingRecenter = true
+            locationManager.requestWhenInUse()
+        default:
+            pendingRecenter = true
+            locationManager.requestOneShotLocation()
         }
     }
 
