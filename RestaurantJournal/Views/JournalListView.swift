@@ -217,6 +217,13 @@ struct JournalListView: View {
                                 .disabled(scanner.isBusy)
                                 Divider()
                             }
+                            if !visits.isEmpty {
+                                NavigationLink {
+                                    RewardsView()
+                                } label: {
+                                    Label("Rewards", systemImage: "gift")
+                                }
+                            }
                             NavigationLink {
                                 RecentlyDeletedView()
                             } label: {

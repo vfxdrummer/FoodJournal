@@ -10,12 +10,27 @@ struct VisitDetailView: View {
     @State private var showingShare = false
     @State private var viewerPhotoID: String?
     @StateObject private var player = AudioPlayerService()
+    @StateObject private var dishRecognizer = DishRecognizer()
 
     private let columns = [
         GridItem(.flexible(), spacing: 4),
         GridItem(.flexible(), spacing: 4),
         GridItem(.flexible(), spacing: 4)
     ]
+
+    private var restaurantVisitCount: Int {
+        visit.restaurant?.visits.filter { $0.deletedAt == nil }.count ?? 1
+    }
+
+    /// Photos in this visit that Vision recognized as food.
+    private var ateFoodPhotos: [PhotoAsset] {
+        visit.photos.filter { !(dishRecognizer.results[$0.localIdentifier]?.isEmpty ?? true) }
+    }
+
+    /// Whether every photo has been analyzed (so we know to stop showing the spinner / hide section).
+    private var dishesAllProcessed: Bool {
+        visit.photos.allSatisfy { dishRecognizer.results[$0.localIdentifier] != nil }
+    }
 
     var body: some View {
         Form {
@@ -62,6 +77,48 @@ struct VisitDetailView: View {
                 } label: {
                     Label(visit.restaurant == nil ? "Set place" : "Wrong place? Change it",
                           systemImage: "mappin.and.ellipse")
+                }
+            }
+
+            if let program = LoyaltyDirectory.program(for: visit.restaurant?.name) {
+                Section {
+                    LoyaltyNudgeCard(program: program, visitCount: restaurantVisitCount)
+                }
+            }
+
+            if !ateFoodPhotos.isEmpty || !dishesAllProcessed {
+                Section("What you ate here") {
+                    if ateFoodPhotos.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Looking at your photos…").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(alignment: .top, spacing: 12) {
+                                ForEach(ateFoodPhotos, id: \.localIdentifier) { photo in
+                                    VStack(spacing: 6) {
+                                        PhotoThumbnailView(
+                                            localIdentifier: photo.localIdentifier,
+                                            targetSize: CGSize(width: 220, height: 220)
+                                        )
+                                        .frame(width: 110, height: 110)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                        .contentShape(RoundedRectangle(cornerRadius: 10))
+                                        .onTapGesture { viewerPhotoID = photo.localIdentifier }
+
+                                        Text((dishRecognizer.results[photo.localIdentifier] ?? []).joined(separator: ", "))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                            .frame(width: 110)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 4))
+                    }
                 }
             }
 
@@ -187,6 +244,9 @@ struct VisitDetailView: View {
         .onChange(of: visit.occasion) { _, _ in try? modelContext.save() }
         .onChange(of: visit.userNote) { _, _ in try? modelContext.save() }
         .onDisappear { player.stop() }
+        .task {
+            dishRecognizer.recognize(visit.photos.map(\.localIdentifier))
+        }
     }
 
     @ViewBuilder
