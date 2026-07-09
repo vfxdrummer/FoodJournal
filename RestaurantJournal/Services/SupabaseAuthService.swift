@@ -140,6 +140,27 @@ final class SupabaseAuthService: ObservableObject {
 
     // MARK: - Session lifecycle
 
+    /// Permanently delete the account server-side (revokes Plaid, deletes financial data + the auth
+    /// user), then clear local session state.
+    func deleteAccount() async throws {
+        guard let current = try await validSession() else { throw AuthError.message("Not signed in.") }
+        guard let url = URL(string: "\(SupabaseConfig.projectURL.absoluteString)/functions/v1/delete-account") else {
+            throw AuthError.message("Invalid URL.")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(SupabaseConfig.publishableKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(current.accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let message = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["error"] as? String
+            throw AuthError.message(message ?? "Couldn't delete account.")
+        }
+        KeychainStore.delete(keychainKey)
+        session = nil
+        ProfileStore.shared.clear()
+    }
+
     func signOut() {
         if let token = session?.accessToken {
             Task { try? await postVoid(path: "logout", body: [:], accessToken: token) }

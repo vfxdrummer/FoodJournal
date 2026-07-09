@@ -25,16 +25,39 @@ struct JournalListView: View {
     @State private var showingProfile = false
     @State private var showingRescanConfirmation = false
     @State private var viewMode: JournalMode = .list
+    @AppStorage("onlyVisitsWithPhotos") private var onlyVisitsWithPhotos = false
+    /// Shared with the map so the rating filter carries across views.
+    @AppStorage("visitRatingFilter") private var ratingFilterRaw = ""
+
+    private var activeRatingFilter: VisitRating? {
+        ratingFilterRaw.isEmpty ? nil : VisitRating(rawValue: ratingFilterRaw)
+    }
+    private var ratingSelection: Binding<VisitRating?> {
+        Binding(get: { activeRatingFilter }, set: { ratingFilterRaw = $0?.rawValue ?? "" })
+    }
+    private var hasRatedVisits: Bool {
+        visits.contains { $0.rating != nil }
+    }
     /// The very first scan must run to completion (the onboarding moment); only afterwards can a
     /// scan be cancelled.
     @AppStorage("hasCompletedInitialScan") private var hasCompletedInitialScan = false
     @State private var recentlyDeleted: Visit?
     @State private var undoDismissTask: Task<Void, Never>?
 
+    /// True once there are card-sourced (photo-less) visits — the only case where the photos-only
+    /// filter changes anything, so we only surface the toggle then.
+    private var hasPhotolessVisits: Bool {
+        visits.contains { $0.photos.isEmpty }
+    }
+
     private var filteredVisits: [Visit] {
+        var base = onlyVisitsWithPhotos ? visits.filter { !$0.photos.isEmpty } : visits
+        if let filter = activeRatingFilter {
+            base = base.filter { $0.rating == filter }
+        }
         let tokens = searchText.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
-        guard !tokens.isEmpty else { return visits }
-        return visits.filter { visit in
+        guard !tokens.isEmpty else { return base }
+        return base.filter { visit in
             let haystack = searchHaystack(for: visit)
             return tokens.allSatisfy { haystack.contains($0) }
         }
@@ -170,6 +193,21 @@ struct JournalListView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                            if hasRatedVisits {
+                                Picker("Filter by rating", selection: ratingSelection) {
+                                    Text("All ratings").tag(Optional<VisitRating>.none)
+                                    ForEach(VisitRating.allCases) { rating in
+                                        Text("\(rating.emoji)  \(rating.label)").tag(Optional(rating))
+                                    }
+                                }
+                                Divider()
+                            }
+                            if hasPhotolessVisits {
+                                Toggle(isOn: $onlyVisitsWithPhotos) {
+                                    Label("Only visits with photos", systemImage: "photo")
+                                }
+                                Divider()
+                            }
                             if !visits.isEmpty {
                                 Button {
                                     showingRescanConfirmation = true
@@ -266,6 +304,15 @@ struct JournalListView: View {
                 )
                 .frame(width: 55, height: 55)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                // Card-sourced visits have no photo — show a card placeholder instead of a gap.
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.gray.opacity(0.12))
+                    .frame(width: 55, height: 55)
+                    .overlay(
+                        Image(systemName: "creditcard")
+                            .foregroundStyle(.secondary)
+                    )
             }
             VStack(alignment: .leading, spacing: 4) {
                 RestaurantNameLabel(restaurant: visit.restaurant)
@@ -275,6 +322,10 @@ struct JournalListView: View {
                 Text(visit.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+            if let rating = visit.rating {
+                Spacer(minLength: 4)
+                Text(rating.emoji).font(.title3)
             }
         }
     }

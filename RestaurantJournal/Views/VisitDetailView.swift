@@ -19,6 +19,15 @@ struct VisitDetailView: View {
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 10) {
+                    ForEach(VisitRating.allCases) { rating in
+                        ratingButton(rating)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+            }
+
             Section("Place") {
                 if let r = visit.restaurant {
                     RestaurantNameLabel(restaurant: r, logoSize: 24)
@@ -38,6 +47,15 @@ struct VisitDetailView: View {
                 }
                 Text(visit.date.formatted(date: .complete, time: .shortened))
                     .font(.caption)
+
+                if let amount = visit.amount {
+                    Label(
+                        amount.formatted(.currency(code: visit.currencyCode ?? "USD")),
+                        systemImage: "creditcard"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
 
                 Button {
                     showingEditPlace = true
@@ -169,6 +187,34 @@ struct VisitDetailView: View {
         .onChange(of: visit.occasion) { _, _ in try? modelContext.save() }
         .onChange(of: visit.userNote) { _, _ in try? modelContext.save() }
         .onDisappear { player.stop() }
+    }
+
+    @ViewBuilder
+    private func ratingButton(_ rating: VisitRating) -> some View {
+        let selected = visit.rating == rating
+        Button {
+            visit.rating = selected ? nil : rating // tap again to clear
+            try? modelContext.save()
+        } label: {
+            VStack(spacing: 4) {
+                Text(rating.emoji).font(.title)
+                Text(rating.label).font(.caption).fontWeight(.semibold)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? Color.accentColor.opacity(0.18) : Color.gray.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(selected ? Color.accentColor : .clear, lineWidth: 1.5)
+            )
+            .foregroundStyle(selected ? Color.accentColor : Color.primary)
+            .grayscale(selected ? 0 : 0.4)
+            .opacity(selected || visit.rating == nil ? 1 : 0.6)
+        }
+        .buttonStyle(.plain)
     }
 
     private func deleteVoiceNotes(_ offsets: IndexSet) {

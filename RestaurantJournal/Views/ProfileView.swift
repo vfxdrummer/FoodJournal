@@ -9,10 +9,19 @@ struct ProfileView: View {
     @ObservedObject private var auth = SupabaseAuthService.shared
     @ObservedObject private var profile = ProfileStore.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @State private var showingPhoneAuth = false
     @State private var appleNonce: String?
     @State private var authError: String?
     @State private var photoItem: PhotosPickerItem?
+#if CARD_LINKING
+    @State private var connectingCard = false
+    @State private var cardResult: String?
+    @AppStorage("hasConnectedCard") private var hasConnectedCard = false
+#endif
+    @State private var showDeleteConfirm = false
+    @State private var deletingAccount = false
+    @State private var accountError: String?
 
     var body: some View {
         NavigationStack {
@@ -172,6 +181,41 @@ struct ProfileView: View {
                 }
             }
 
+#if CARD_LINKING
+            Section {
+                Button {
+                    Task { await connectCard() }
+                } label: {
+                    if connectingCard {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("Connecting…")
+                        }
+                    } else {
+                        Label("Connect a card", systemImage: "creditcard")
+                    }
+                }
+                .disabled(connectingCard)
+
+                if hasConnectedCard {
+                    Button(role: .destructive) {
+                        Task { await disconnectCard() }
+                    } label: {
+                        Label("Disconnect card", systemImage: "minus.circle")
+                    }
+                    .disabled(connectingCard)
+                }
+
+                if let cardResult {
+                    Text(cardResult).font(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Cards")
+            } footer: {
+                Text("Import your dining charges to capture meals you didn't photograph.")
+            }
+#endif
+
             Section {
                 Button(role: .destructive) {
                     auth.signOut()
@@ -179,8 +223,38 @@ struct ProfileView: View {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             }
+
+            Section {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: {
+                    if deletingAccount {
+                        HStack(spacing: 8) { ProgressView(); Text("Deleting…") }
+                    } else {
+                        Label("Delete Account", systemImage: "trash")
+                    }
+                }
+                .disabled(deletingAccount)
+                if let accountError {
+                    Text(accountError).font(.caption).foregroundStyle(.red)
+                }
+            } footer: {
+                Text("Permanently deletes your account, disconnects any linked cards, and removes your financial data from our servers. Your on-device journal stays on this device.")
+            }
         }
         .navigationTitle("Profile")
+        .confirmationDialog(
+            "Delete your account?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Account", role: .destructive) {
+                Task { await deleteAccount() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
+        }
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -189,6 +263,64 @@ struct ProfileView: View {
                     profile.setImage(data: data)
                 }
             }
+        }
+    }
+
+    // MARK: - Cards
+
+#if CARD_LINKING
+    private func connectCard() async {
+        connectingCard = true
+        cardResult = nil
+        defer { connectingCard = false }
+        do {
+            let count = try await PlaidService.shared.connectCard()
+            hasConnectedCard = true
+            let transactions = try await PlaidService.shared.fetchDiningTransactions()
+            let created = CardVisitIngestor.ingest(transactions, in: modelContext)
+            if created > 0 {
+                cardResult = "Added \(created) dining visit\(created == 1 ? "" : "s") from your card."
+            } else if count > 0 {
+                cardResult = "Charges matched to visits you already have."
+            } else {
+                cardResult = "Card connected — no dining charges found yet."
+            }
+        } catch {
+            // A user cancelling the Plaid browser isn't an error worth showing.
+            if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
+                cardResult = error.localizedDescription
+            }
+        }
+    }
+
+    private func disconnectCard() async {
+        connectingCard = true
+        cardResult = nil
+        defer { connectingCard = false }
+        do {
+            try await PlaidService.shared.disconnectCard()
+            CardVisitIngestor.removeCardData(in: modelContext)
+            hasConnectedCard = false
+            cardResult = "Card disconnected."
+        } catch {
+            cardResult = error.localizedDescription
+        }
+    }
+#endif
+
+    private func deleteAccount() async {
+        deletingAccount = true
+        accountError = nil
+        defer { deletingAccount = false }
+        do {
+            try await auth.deleteAccount()
+            CardVisitIngestor.removeCardData(in: modelContext)
+#if CARD_LINKING
+            hasConnectedCard = false
+#endif
+            // Session is now nil → the view flips back to the signed-out hero.
+        } catch {
+            accountError = error.localizedDescription
         }
     }
 

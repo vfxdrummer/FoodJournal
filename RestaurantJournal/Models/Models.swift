@@ -2,6 +2,26 @@ import Foundation
 import SwiftData
 import CoreLocation
 
+/// How the user felt about a visit.
+enum VisitRating: String, CaseIterable, Identifiable {
+    case yay, okay, meh
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .yay: return "Yay!"
+        case .okay: return "Okay"
+        case .meh: return "Meh"
+        }
+    }
+    var emoji: String {
+        switch self {
+        case .yay: return "😋"
+        case .okay: return "🙂"
+        case .meh: return "😐"
+        }
+    }
+}
+
 @Model
 final class Restaurant {
     var name: String
@@ -55,6 +75,24 @@ final class Visit {
     /// When set, this visit is in "Recently Deleted": hidden everywhere but fully recoverable, and
     /// permanently purged after a grace period. `nil` means the visit is live.
     var deletedAt: Date?
+
+    /// The user's rating of this visit (raw value of `VisitRating`).
+    var ratingRaw: String?
+
+    /// The user's rating of this visit, as a typed value.
+    var rating: VisitRating? {
+        get { ratingRaw.flatMap(VisitRating.init) }
+        set { ratingRaw = newValue?.rawValue }
+    }
+
+    /// The Plaid transaction this visit was created from or matched to — dedupes card ingestion.
+    var cardTransactionID: String?
+    /// The card charge amount + currency, when this visit came from (or was matched to) a card.
+    var amount: Double?
+    var currencyCode: String?
+
+    /// A visit sourced only from a card charge (no photos backing it).
+    var isCardOnly: Bool { cardTransactionID != nil && photos.isEmpty }
 
     @Relationship(deleteRule: .cascade, inverse: \PhotoAsset.visit)
     var photos: [PhotoAsset] = []

@@ -11,6 +11,7 @@ struct JournalMapView: View {
     let onScan: () -> Void
 
     @Query private var restaurants: [Restaurant]
+    @AppStorage("onlyVisitsWithPhotos") private var onlyVisitsWithPhotos = false
 
     @State private var cameraPosition: MapCameraPosition = .automatic
     @State private var visibleRegion: MKCoordinateRegion?
@@ -19,12 +20,37 @@ struct JournalMapView: View {
     @StateObject private var locationManager = LocationManager()
     @State private var pendingRecenter = false
     @State private var showLocationDenied = false
+    /// Shared with the list via AppStorage so "show my Yay places" carries across views.
+    @AppStorage("visitRatingFilter") private var ratingFilterRaw = ""
 
-    /// Restaurants that have a real coordinate and at least one visit that isn't in the trash.
+    private var activeRatingFilter: VisitRating? {
+        ratingFilterRaw.isEmpty ? nil : VisitRating(rawValue: ratingFilterRaw)
+    }
+    private var ratingSelection: Binding<VisitRating?> {
+        Binding(get: { activeRatingFilter }, set: { ratingFilterRaw = $0?.rawValue ?? "" })
+    }
+
+    /// A restaurant's live visits that pass the active filters (photos-only and rating).
+    private func matchingVisits(_ restaurant: Restaurant) -> [Visit] {
+        restaurant.visits.filter { visit in
+            guard visit.deletedAt == nil else { return false }
+            if onlyVisitsWithPhotos && visit.photos.isEmpty { return false }
+            if let filter = activeRatingFilter, visit.rating != filter { return false }
+            return true
+        }
+    }
+
+    /// Restaurants with a real coordinate and at least one visit passing the current filters.
     private var mappable: [Restaurant] {
         restaurants.filter { restaurant in
-            (restaurant.latitude != 0 || restaurant.longitude != 0)
-                && restaurant.visits.contains { $0.deletedAt == nil }
+            (restaurant.latitude != 0 || restaurant.longitude != 0) && !matchingVisits(restaurant).isEmpty
+        }
+    }
+
+    /// Whether any live visit is rated — the map's rating filter only appears then.
+    private var hasRatedVisits: Bool {
+        restaurants.contains { restaurant in
+            restaurant.visits.contains { $0.deletedAt == nil && $0.rating != nil }
         }
     }
 
@@ -79,6 +105,11 @@ struct JournalMapView: View {
         .mapControls {
             MapCompass()
         }
+        .safeAreaInset(edge: .top) {
+            if hasRatedVisits {
+                ratingFilterBar
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: 10) {
                 HStack {
@@ -118,6 +149,21 @@ struct JournalMapView: View {
         } message: {
             Text("Turn on location access in Settings to center the map on where you are.")
         }
+    }
+
+    private var ratingFilterBar: some View {
+        Picker("Filter by rating", selection: ratingSelection) {
+            Text("All").tag(Optional<VisitRating>.none)
+            ForEach(VisitRating.allCases) { rating in
+                Text(rating.emoji).tag(Optional(rating))
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(5)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(maxWidth: 320)
+        .padding(.horizontal)
+        .padding(.top, 8)
     }
 
     private var locateButton: some View {
@@ -235,7 +281,7 @@ struct JournalMapView: View {
     }
 
     private func liveVisitCount(_ restaurant: Restaurant) -> Int {
-        restaurant.visits.filter { $0.deletedAt == nil }.count
+        matchingVisits(restaurant).count
     }
 
     /// A region that frames the given places, with padding and a sensible minimum span.
