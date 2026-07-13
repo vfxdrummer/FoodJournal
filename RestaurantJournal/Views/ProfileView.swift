@@ -276,6 +276,7 @@ struct ProfileView: View {
         do {
             let count = try await PlaidService.shared.connectCard()
             hasConnectedCard = true
+            Analytics.log("card_connected")
             let transactions = try await PlaidService.shared.fetchDiningTransactions()
             let created = CardVisitIngestor.ingest(transactions, in: modelContext)
             if created > 0 {

@@ -94,32 +94,38 @@ struct VisitDetailView: View {
                             Text("Looking at your photos…").foregroundStyle(.secondary)
                         }
                     } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(alignment: .top, spacing: 12) {
-                                ForEach(ateFoodPhotos, id: \.localIdentifier) { photo in
-                                    VStack(spacing: 6) {
+                        // Fixed-HEIGHT cells (not aspect-ratio): a fractional column width would give
+                        // a fractional square height that rounds inconsistently and loops the layout.
+                        LazyVGrid(columns: columns, spacing: 4) {
+                            ForEach(ateFoodPhotos, id: \.localIdentifier) { photo in
+                                Color.clear
+                                    .frame(height: 110)
+                                    .overlay {
                                         PhotoThumbnailView(
                                             localIdentifier: photo.localIdentifier,
-                                            targetSize: CGSize(width: 220, height: 220)
+                                            targetSize: CGSize(width: 300, height: 300)
                                         )
-                                        .frame(width: 110, height: 110)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                                        .contentShape(RoundedRectangle(cornerRadius: 10))
-                                        .onTapGesture { viewerPhotoID = photo.localIdentifier }
-
-                                        Text((dishRecognizer.results[photo.localIdentifier] ?? []).joined(separator: ", "))
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                            .frame(width: 110)
                                     }
-                                }
+                                    .overlay(alignment: .bottom) {
+                                        let dish = (dishRecognizer.results[photo.localIdentifier] ?? []).joined(separator: ", ")
+                                        if !dish.isEmpty {
+                                            Text(dish)
+                                                .font(.caption2).fontWeight(.medium)
+                                                .foregroundStyle(.white)
+                                                .lineLimit(1)
+                                                .frame(maxWidth: .infinity)
+                                                .padding(.vertical, 3)
+                                                .background(.black.opacity(0.45))
+                                        }
+                                    }
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                                    .onTapGesture { viewerPhotoID = photo.localIdentifier }
                             }
-                            .padding(.vertical, 4)
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 4))
                     }
                 }
+                .listRowInsets(EdgeInsets())
             }
 
             Section("Occasion") {
@@ -181,7 +187,7 @@ struct VisitDetailView: View {
                             // with the photo overlaid and clipped. This avoids the unbounded
                             // ".aspectRatio(.fill)" that can trigger a UICollectionView layout loop.
                             Color.clear
-                                .aspectRatio(1, contentMode: .fit)
+                                .frame(height: 110)
                                 .overlay {
                                     PhotoThumbnailView(
                                         localIdentifier: photo.localIdentifier,
@@ -197,6 +203,15 @@ struct VisitDetailView: View {
                                             .padding(4)
                                             .background(Color.accentColor, in: Circle())
                                             .padding(4)
+                                    }
+                                }
+                                .overlay(alignment: .bottomTrailing) {
+                                    if photo.isVideo {
+                                        Image(systemName: "play.circle.fill")
+                                            .font(.body)
+                                            .foregroundStyle(.white)
+                                            .shadow(radius: 2)
+                                            .padding(5)
                                     }
                                 }
                                 .contentShape(RoundedRectangle(cornerRadius: 6))
@@ -246,6 +261,10 @@ struct VisitDetailView: View {
         .onDisappear { player.stop() }
         .task {
             dishRecognizer.recognize(visit.photos.map(\.localIdentifier))
+            Analytics.log("visit_viewed", [
+                "brand": LoyaltyDirectory.program(for: visit.restaurant?.name)?.brand ?? "Independent",
+                "restaurant": visit.restaurant?.name ?? "Unknown",
+            ])
         }
     }
 
@@ -255,6 +274,7 @@ struct VisitDetailView: View {
         Button {
             visit.rating = selected ? nil : rating // tap again to clear
             try? modelContext.save()
+            if !selected { Analytics.log("rating_set", ["rating": rating.rawValue]) }
         } label: {
             VStack(spacing: 4) {
                 Text(rating.emoji).font(.title)

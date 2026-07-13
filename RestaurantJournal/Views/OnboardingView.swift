@@ -32,6 +32,7 @@ struct OnboardingView: View {
                 if page < lastPage {
                     withAnimation { page += 1 }
                 } else {
+                    Analytics.log("onboarding_completed")
                     onFinish()
                 }
             } label: {

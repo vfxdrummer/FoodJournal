@@ -303,6 +303,7 @@ struct AskJournalView: View {
         defer { isLoading = false }
 
         QueryRateLimiter.record()
+        Analytics.log("ask_used", ["provider": provider.rawValue])
         let service = JournalQueryService(client: client)
         do {
             let result = try await service.ask(question: trimmed, visits: visits)

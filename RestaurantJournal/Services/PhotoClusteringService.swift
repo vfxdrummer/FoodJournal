@@ -24,8 +24,12 @@ enum PhotoClusteringService {
         if let since {
             predicates.append(NSPredicate(format: "creationDate > %@", since as NSDate))
         }
-        // Only images (skip videos for MVP)
-        predicates.append(NSPredicate(format: "mediaType == %d", PHAssetMediaType.image.rawValue))
+        // Photos and videos (both carry geotags + timestamps and cluster the same way).
+        predicates.append(NSPredicate(
+            format: "mediaType == %d OR mediaType == %d",
+            PHAssetMediaType.image.rawValue,
+            PHAssetMediaType.video.rawValue
+        ))
         options.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
 

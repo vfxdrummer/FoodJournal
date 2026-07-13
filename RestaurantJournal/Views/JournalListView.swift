@@ -124,8 +124,12 @@ struct JournalListView: View {
                     .transition(.opacity)
                 }
             }
+            .onChange(of: viewMode) { _, mode in
+                if mode == .map { Analytics.log("map_opened") }
+            }
             .onChange(of: scanner.phase) { _, phase in
                 guard phase == .finished else { return }
+                Analytics.log("scan_completed", ["visits_found": scanner.newVisitCount])
                 // Once a scan finishes without error, the onboarding scan is done — later scans
                 // (including Rescan All) may be cancelled from then on.
                 if scanner.errorMessage == nil { hasCompletedInitialScan = true }

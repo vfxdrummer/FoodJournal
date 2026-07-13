@@ -147,13 +147,15 @@ final class PhotoAsset {
     var takenAt: Date
     var latitude: Double?
     var longitude: Double?
+    var isVideo: Bool = false
     var visit: Visit?
 
-    init(localIdentifier: String, takenAt: Date, latitude: Double? = nil, longitude: Double? = nil) {
+    init(localIdentifier: String, takenAt: Date, latitude: Double? = nil, longitude: Double? = nil, isVideo: Bool = false) {
         self.localIdentifier = localIdentifier
         self.takenAt = takenAt
         self.latitude = latitude
         self.longitude = longitude
+        self.isVideo = isVideo
     }
 }
 

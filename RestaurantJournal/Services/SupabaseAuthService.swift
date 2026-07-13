@@ -39,6 +39,7 @@ final class SupabaseAuthService: ObservableObject {
 
     private init() {
         session = loadSession()
+        Analytics.isAuthenticated = session != nil
     }
 
     // MARK: - Phone OTP
@@ -159,6 +160,8 @@ final class SupabaseAuthService: ObservableObject {
         KeychainStore.delete(keychainKey)
         session = nil
         ProfileStore.shared.clear()
+        Analytics.isAuthenticated = false
+        Analytics.log("account_deleted")
     }
 
     func signOut() {
@@ -168,6 +171,8 @@ final class SupabaseAuthService: ObservableObject {
         KeychainStore.delete(keychainKey)
         session = nil
         ProfileStore.shared.clear()
+        Analytics.isAuthenticated = false
+        Analytics.log("signed_out")
     }
 
     /// Return a session with a fresh access token, refreshing if it's near expiry. Backend calls
@@ -191,11 +196,14 @@ final class SupabaseAuthService: ObservableObject {
     }
 
     private func store(_ newSession: AuthSession) {
+        let wasSignedIn = session != nil
         if let data = try? JSONEncoder().encode(newSession),
            let json = String(data: data, encoding: .utf8) {
             KeychainStore.save(json, for: keychainKey)
         }
         session = newSession
+        Analytics.isAuthenticated = true
+        if !wasSignedIn { Analytics.log("signed_in") } // transition only, not token refreshes
 
         // Best-effort avatar: providers stash a photo URL in user_metadata (Google does; Apple and
         // phone don't). Fetched only if the user hasn't set one manually.

@@ -5,6 +5,7 @@ import SwiftData
 /// known loyalty program, ranked by how often you go, with a link to join.
 struct RewardsView: View {
     @Query private var restaurants: [Restaurant]
+    @Environment(\.openURL) private var openURL
 
     private struct Row: Identifiable {
         let id: String            // the loyalty program's id — one row per program, not per location
@@ -73,7 +74,10 @@ struct RewardsView: View {
             }
             Spacer()
             if let url = row.program.joinURL {
-                Link(destination: url) {
+                Button {
+                    Analytics.log("loyalty_join_tapped", ["brand": row.program.brand, "source": "rewards"])
+                    openURL(url)
+                } label: {
                     Text("Join")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14)
@@ -96,6 +100,7 @@ struct RewardsView: View {
 struct LoyaltyNudgeCard: View {
     let program: LoyaltyProgram
     let visitCount: Int
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -107,7 +112,10 @@ struct LoyaltyNudgeCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             if let url = program.joinURL {
-                Link(destination: url) {
+                Button {
+                    Analytics.log("loyalty_join_tapped", ["brand": program.brand, "source": "visit"])
+                    openURL(url)
+                } label: {
                     Label("Join \(program.programName)", systemImage: "arrow.up.right")
                         .font(.subheadline.weight(.semibold))
                 }

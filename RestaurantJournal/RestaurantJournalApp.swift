@@ -26,6 +26,7 @@ struct RestaurantJournalApp: App {
     var body: some Scene {
         WindowGroup {
             AppRootView()
+                .task { Analytics.log("app_open") }
         }
         .modelContainer(sharedModelContainer)
     }

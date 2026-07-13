@@ -1,7 +1,9 @@
 import SwiftUI
 import SwiftData
+import Photos
+import AVKit
 
-/// Full-screen, swipeable photo viewer for a visit's album, with a one-tap "Set as cover".
+/// Full-screen, swipeable viewer for a visit's album (photos and videos), with a one-tap "Set as cover".
 struct PhotoViewerView: View {
     @Bindable var visit: Visit
     let photoIDs: [String]
@@ -14,6 +16,10 @@ struct PhotoViewerView: View {
         visit.coverPhoto?.localIdentifier == selection
     }
 
+    private func isVideo(_ id: String) -> Bool {
+        visit.photos.first { $0.localIdentifier == id }?.isVideo ?? false
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -21,8 +27,14 @@ struct PhotoViewerView: View {
 
                 TabView(selection: $selection) {
                     ForEach(photoIDs, id: \.self) { id in
-                        LargePhotoView(localIdentifier: id)
-                            .tag(id)
+                        Group {
+                            if isVideo(id) {
+                                VideoPageView(localIdentifier: id, isCurrent: id == selection)
+                            } else {
+                                LargePhotoView(localIdentifier: id)
+                            }
+                        }
+                        .tag(id)
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: photoIDs.count > 1 ? .automatic : .never))
@@ -87,6 +99,50 @@ private struct LargePhotoView: View {
         .task(id: localIdentifier) {
             scale = 1; steadyScale = 1
             image = await PhotoThumbnailLoader.loadShareImage(localIdentifier: localIdentifier, maxDimension: 1800)
+        }
+    }
+}
+
+/// A single video played full-screen. Auto-plays when it's the current page; pauses otherwise.
+private struct VideoPageView: View {
+    let localIdentifier: String
+    let isCurrent: Bool
+
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        ZStack {
+            if let player {
+                VideoPlayer(player: player)
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: localIdentifier) {
+            player = await loadPlayer()
+            if isCurrent { player?.play() }
+        }
+        .onChange(of: isCurrent) { _, current in
+            if current { player?.play() } else { player?.pause() }
+        }
+        .onDisappear { player?.pause() }
+    }
+
+    private func loadPlayer() async -> AVPlayer? {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
+        guard let asset = assets.firstObject else { return nil }
+        let options = PHVideoRequestOptions()
+        options.isNetworkAccessAllowed = true
+        options.deliveryMode = .automatic
+        return await withCheckedContinuation { continuation in
+            PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in
+                if let item {
+                    continuation.resume(returning: AVPlayer(playerItem: item))
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
         }
     }
 }

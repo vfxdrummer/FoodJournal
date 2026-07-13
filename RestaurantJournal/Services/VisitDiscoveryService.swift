@@ -178,24 +178,39 @@ final class VisitDiscoveryService {
                     let candidates = await RestaurantLookupService.lookup(near: cluster.centroid)
                     if let best = candidates.first {
                         let restaurant = try RestaurantResolver.findOrCreate(from: best, in: context)
-                        let visit = Visit(
-                            date: cluster.startDate,
-                            restaurant: restaurant,
-                            latitude: cluster.centroid.latitude,
-                            longitude: cluster.centroid.longitude
-                        )
-                        context.insert(visit)
+
+                        // If the same meal was split across scans (same place, minutes apart), fold
+                        // the new photos into that recent visit instead of creating a duplicate.
+                        let target: Visit
+                        if let existing = mergeableVisit(for: restaurant, cluster: cluster) {
+                            target = existing
+                        } else {
+                            let visit = Visit(
+                                date: cluster.startDate,
+                                restaurant: restaurant,
+                                latitude: cluster.centroid.latitude,
+                                longitude: cluster.centroid.longitude
+                            )
+                            context.insert(visit)
+                            newVisitCount += 1
+                            target = visit
+                            Analytics.log("visit_created", [
+                                "brand": LoyaltyDirectory.program(for: restaurant.name)?.brand ?? "Independent",
+                                "restaurant": restaurant.name,
+                            ])
+                        }
+
                         for asset in cluster.assets {
                             let photo = PhotoAsset(
                                 localIdentifier: asset.localIdentifier,
                                 takenAt: asset.creationDate ?? cluster.startDate,
                                 latitude: asset.location?.coordinate.latitude,
-                                longitude: asset.location?.coordinate.longitude
+                                longitude: asset.location?.coordinate.longitude,
+                                isVideo: asset.mediaType == .video
                             )
-                            photo.visit = visit
+                            photo.visit = target
                             context.insert(photo)
                         }
-                        newVisitCount += 1
                     }
                 }
 
@@ -259,6 +274,25 @@ final class VisitDiscoveryService {
     }
 
     /// Identifiers of photos already imported into a visit — skipped so scans never duplicate.
+    /// A recent, live visit at the same restaurant whose photos fall within the clustering time gap
+    /// of this cluster — i.e. the same meal, captured across multiple scans.
+    private func mergeableVisit(for restaurant: Restaurant, cluster: PhotoCluster) -> Visit? {
+        let gapLimit = PhotoClusteringService.maxTimeGapSeconds
+        return restaurant.visits.first { visit in
+            guard visit.deletedAt == nil else { return false }
+            let times = visit.photos.map(\.takenAt)
+            let visitStart = times.min() ?? visit.date
+            let visitEnd = times.max() ?? visit.date
+            // Gap between the two time intervals (0 when they overlap).
+            let gap = max(
+                cluster.startDate.timeIntervalSince(visitEnd),
+                visitStart.timeIntervalSince(cluster.endDate),
+                0
+            )
+            return gap <= gapLimit
+        }
+    }
+
     private func loadImportedIDs(in context: ModelContext) throws -> Set<String> {
         let photos = try context.fetch(FetchDescriptor<PhotoAsset>())
         return Set(photos.map { $0.localIdentifier })
